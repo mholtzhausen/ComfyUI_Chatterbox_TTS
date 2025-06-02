@@ -1,15 +1,12 @@
 import { app } from "../../scripts/app.js";
 
 app.registerExtension({
-    name: "Fill-ChatterBox.appearance", // Extension name
-    async nodeCreated(node) {
-        // Check if the node's comfyClass starts with "FL_"
-        if (node.comfyClass.startsWith("FL_")) {
-            // Apply styling
-            node.color = "#16727c";
-            node.bgcolor = "#4F0074";
-
-
-        }
+  name: "MH_Nodes.appearance",
+  async nodeCreated(node) {
+    if (node.comfyClass.startsWith("MH_")) {
+      // Apply styling
+      node.color = "#865A04";
+      node.bgcolor = "#4F0074";
     }
+  },
 });

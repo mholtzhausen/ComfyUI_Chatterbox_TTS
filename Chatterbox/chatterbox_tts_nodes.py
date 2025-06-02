@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Optional
 
 # Import directly from the chatterbox package
-from .local_chatterbox.chatterbox.tts import ChatterboxTTS
-from .local_chatterbox.chatterbox.vc import ChatterboxVC
+from ..local_chatterbox.chatterbox.tts import ChatterboxTTS
+from ..local_chatterbox.chatterbox.vc import ChatterboxVC
 
 from comfy.utils import ProgressBar
 
@@ -42,7 +42,7 @@ class AudioNodeBase:
             return torch.zeros((num_frames, height, width, channels), dtype=torch.float32)
 
 # Text-to-Speech node
-class FL_ChatterboxTTSNode(AudioNodeBase):
+class MH_ChatterboxTTS(AudioNodeBase):
     """
     ComfyUI node for Chatterbox Text-to-Speech functionality.
     """
@@ -54,21 +54,21 @@ class FL_ChatterboxTTSNode(AudioNodeBase):
         return {
             "required": {
                 "text": ("STRING", {"multiline": True, "default": "Hello, this is a test."}),
-                "exaggeration": ("FLOAT", {"default": 0.5, "min": 0.25, "max": 2.0, "step": 0.05}),
-                "cfg_weight": ("FLOAT", {"default": 0.5, "min": 0.2, "max": 1.0, "step": 0.05}),
-                "temperature": ("FLOAT", {"default": 0.8, "min": 0.05, "max": 5.0, "step": 0.05}),
+                "exaggeration": ("FLOAT", {"default": 0.7, "min": 0.25, "max": 2.0, "step": 0.05}),
+                "cfg_weight": ("FLOAT", {"default": 0.3, "min": 0.2, "max": 1.0, "step": 0.05}),
+                "temperature": ("FLOAT", {"default": 0.7, "min": 0.05, "max": 5.0, "step": 0.05}),
             },
             "optional": {
                 "audio_prompt": ("AUDIO",),
                 "use_cpu": ("BOOLEAN", {"default": False}),
-                "keep_model_loaded": ("BOOLEAN", {"default": False}),
+                "keep_model_loaded": ("BOOLEAN", {"default": True}),
             }
         }
     
     RETURN_TYPES = ("AUDIO", "STRING")
     RETURN_NAMES = ("audio", "message")
     FUNCTION = "generate_speech"
-    CATEGORY = "ChatterBox"
+    CATEGORY = "MH/Chatterbox TTS"
     
     def generate_speech(self, text, exaggeration, cfg_weight, temperature, audio_prompt=None, use_cpu=False, keep_model_loaded=False):
         """
@@ -130,14 +130,14 @@ class FL_ChatterboxTTSNode(AudioNodeBase):
         pbar = ProgressBar(100) # Simple progress bar for overall process
         try:
             # Load the TTS model or reuse if loaded and device matches
-            if FL_ChatterboxTTSNode._tts_model is not None and FL_ChatterboxTTSNode._tts_device == device:
-                tts_model = FL_ChatterboxTTSNode._tts_model
+            if MH_ChatterboxTTS._tts_model is not None and MH_ChatterboxTTS._tts_device == device:
+                tts_model = MH_ChatterboxTTS._tts_model
                 message += f"\nReusing loaded TTS model on {device}..."
             else:
-                if FL_ChatterboxTTSNode._tts_model is not None:
+                if MH_ChatterboxTTS._tts_model is not None:
                     message += f"\nUnloading previous TTS model (device mismatch or keep_model_loaded is False)..."
-                    FL_ChatterboxTTSNode._tts_model = None
-                    FL_ChatterboxTTSNode._tts_device = None
+                    MH_ChatterboxTTS._tts_model = None
+                    MH_ChatterboxTTS._tts_device = None
                     if torch.cuda.is_available():
                          torch.cuda.empty_cache() # Clear CUDA cache if possible
                     if torch.backends.mps.is_available():
@@ -150,8 +150,8 @@ class FL_ChatterboxTTSNode(AudioNodeBase):
                 pbar.update_absolute(50) # Indicate model loading finished
 
                 if keep_model_loaded:
-                    FL_ChatterboxTTSNode._tts_model = tts_model
-                    FL_ChatterboxTTSNode._tts_device = device
+                    MH_ChatterboxTTS._tts_model = tts_model
+                    MH_ChatterboxTTS._tts_device = device
                     message += "\nModel will be kept loaded in memory."
                 else:
                     message += "\nModel will be unloaded after use."
@@ -192,10 +192,10 @@ class FL_ChatterboxTTSNode(AudioNodeBase):
             if fallback_to_cpu:
                 device = "cpu"
                 # Unload previous model if it exists
-                if FL_ChatterboxTTSNode._tts_model is not None:
+                if MH_ChatterboxTTS._tts_model is not None:
                     message += f"\nUnloading previous TTS model..."
-                    FL_ChatterboxTTSNode._tts_model = None
-                    FL_ChatterboxTTSNode._tts_device = None
+                    MH_ChatterboxTTS._tts_model = None
+                    MH_ChatterboxTTS._tts_device = None
                     if torch.cuda.is_available():
                          torch.cuda.empty_cache() # Clear CUDA cache if possible
                     if torch.backends.mps.is_available():
@@ -236,10 +236,10 @@ class FL_ChatterboxTTSNode(AudioNodeBase):
                     os.unlink(temp_file)
             # If keep_model_loaded is False, ensure model is not stored
             # This is done here to ensure model is only kept if generation was successful
-            if not keep_model_loaded and FL_ChatterboxTTSNode._tts_model is not None:
+            if not keep_model_loaded and MH_ChatterboxTTS._tts_model is not None:
                  message += "\nUnloading TTS model as keep_model_loaded is False."
-                 FL_ChatterboxTTSNode._tts_model = None
-                 FL_ChatterboxTTSNode._tts_device = None
+                 MH_ChatterboxTTS._tts_model = None
+                 MH_ChatterboxTTS._tts_device = None
                  if torch.cuda.is_available():
                      torch.cuda.empty_cache() # Clear CUDA cache if possible
                  if torch.backends.mps.is_available():
@@ -251,15 +251,15 @@ class FL_ChatterboxTTSNode(AudioNodeBase):
 
         # If generation was successful and keep_model_loaded is True, store the model
         if keep_model_loaded and tts_model is not None:
-             FL_ChatterboxTTSNode._tts_model = tts_model
-             FL_ChatterboxTTSNode._tts_device = device
+             MH_ChatterboxTTS._tts_model = tts_model
+             MH_ChatterboxTTS._tts_device = device
              message += "\nModel will be kept loaded in memory."
-        elif not keep_model_loaded and FL_ChatterboxTTSNode._tts_model is not None:
+        elif not keep_model_loaded and MH_ChatterboxTTS._tts_model is not None:
              # This case handles successful generation when keep_model_loaded was True previously
              # but is now False. Ensure the model is unloaded.
              message += "\nUnloading TTS model as keep_model_loaded is now False."
-             FL_ChatterboxTTSNode._tts_model = None
-             FL_ChatterboxTTSNode._tts_device = None
+             MH_ChatterboxTTS._tts_model = None
+             MH_ChatterboxTTS._tts_device = None
              if torch.cuda.is_available():
                  torch.cuda.empty_cache() # Clear CUDA cache if possible
              if torch.backends.mps.is_available():
@@ -278,7 +278,7 @@ class FL_ChatterboxTTSNode(AudioNodeBase):
         return (audio_data, message)
 
 # Voice Conversion node
-class FL_ChatterboxVCNode(AudioNodeBase):
+class MH_ChatterboxVoiceSwap(AudioNodeBase):
     """
     ComfyUI node for Chatterbox Voice Conversion functionality.
     """
@@ -301,7 +301,7 @@ class FL_ChatterboxVCNode(AudioNodeBase):
     RETURN_TYPES = ("AUDIO", "STRING")
     RETURN_NAMES = ("audio", "message")
     FUNCTION = "convert_voice"
-    CATEGORY = "ChatterBox"
+    CATEGORY = "MH/Chatterbox TTS"
     
     def convert_voice(self, input_audio, target_voice, use_cpu=False, keep_model_loaded=False):
         """
@@ -353,14 +353,14 @@ class FL_ChatterboxVCNode(AudioNodeBase):
         pbar = ProgressBar(100) # Simple progress bar for overall process
         try:
             # Load the VC model or reuse if loaded and device matches
-            if FL_ChatterboxVCNode._vc_model is not None and FL_ChatterboxVCNode._vc_device == device:
-                vc_model = FL_ChatterboxVCNode._vc_model
+            if MH_ChatterboxVoiceSwap._vc_model is not None and MH_ChatterboxVoiceSwap._vc_device == device:
+                vc_model = MH_ChatterboxVoiceSwap._vc_model
                 message += f"\nReusing loaded VC model on {device}..."
             else:
-                if FL_ChatterboxVCNode._vc_model is not None:
+                if MH_ChatterboxVoiceSwap._vc_model is not None:
                     message += f"\nUnloading previous VC model (device mismatch or keep_model_loaded is False)..."
-                    FL_ChatterboxVCNode._vc_model = None
-                    FL_ChatterboxVCNode._vc_device = None
+                    MH_ChatterboxVoiceSwap._vc_model = None
+                    MH_ChatterboxVoiceSwap._vc_device = None
                     if torch.cuda.is_available():
                          torch.cuda.empty_cache() # Clear CUDA cache if possible
                     if torch.backends.mps.is_available():
@@ -372,8 +372,8 @@ class FL_ChatterboxVCNode(AudioNodeBase):
                 pbar.update_absolute(50) # Indicate model loading finished
 
                 if keep_model_loaded:
-                    FL_ChatterboxVCNode._vc_model = vc_model
-                    FL_ChatterboxVCNode._vc_device = device
+                    MH_ChatterboxVoiceSwap._vc_model = vc_model
+                    MH_ChatterboxVoiceSwap._vc_device = device
                     message += "\nModel will be kept loaded in memory."
                 else:
                     message += "\nModel will be unloaded after use."
@@ -402,10 +402,10 @@ class FL_ChatterboxVCNode(AudioNodeBase):
             if fallback_to_cpu:
                 device = "cpu"
                 # Unload previous model if it exists
-                if FL_ChatterboxVCNode._vc_model is not None:
+                if MH_ChatterboxVoiceSwap._vc_model is not None:
                     message += f"\nUnloading previous VC model..."
-                    FL_ChatterboxVCNode._vc_model = None
-                    FL_ChatterboxVCNode._vc_device = None
+                    MH_ChatterboxVoiceSwap._vc_model = None
+                    MH_ChatterboxVoiceSwap._vc_device = None
                     if torch.cuda.is_available():
                          torch.cuda.empty_cache() # Clear CUDA cache if possible
                     if torch.backends.mps.is_available():
@@ -445,10 +445,10 @@ class FL_ChatterboxVCNode(AudioNodeBase):
                     os.unlink(temp_file)
             # If keep_model_loaded is False, ensure model is not stored
             # This is done here to ensure model is only kept if generation was successful
-            if not keep_model_loaded and FL_ChatterboxVCNode._vc_model is not None:
+            if not keep_model_loaded and MH_ChatterboxVoiceSwap._vc_model is not None:
                  message += "\nUnloading VC model as keep_model_loaded is False."
-                 FL_ChatterboxVCNode._vc_model = None
-                 FL_ChatterboxVCNode._vc_device = None
+                 MH_ChatterboxVoiceSwap._vc_model = None
+                 MH_ChatterboxVoiceSwap._vc_device = None
                  if torch.cuda.is_available():
                      torch.cuda.empty_cache() # Clear CUDA cache if possible
                  if torch.backends.mps.is_available():
@@ -456,15 +456,15 @@ class FL_ChatterboxVCNode(AudioNodeBase):
 
         # If generation was successful and keep_model_loaded is True, store the model
         if keep_model_loaded and vc_model is not None:
-             FL_ChatterboxVCNode._vc_model = vc_model
-             FL_ChatterboxVCNode._vc_device = device
+             MH_ChatterboxVoiceSwap._vc_model = vc_model
+             MH_ChatterboxVoiceSwap._vc_device = device
              message += "\nModel will be kept loaded in memory."
-        elif not keep_model_loaded and FL_ChatterboxVCNode._vc_model is not None:
+        elif not keep_model_loaded and MH_ChatterboxVoiceSwap._vc_model is not None:
              # This case handles successful generation when keep_model_loaded was True previously
              # but is now False. Ensure the model is unloaded.
              message += "\nUnloading VC model as keep_model_loaded is now False."
-             FL_ChatterboxVCNode._vc_model = None
-             FL_ChatterboxVCNode._vc_device = None
+             MH_ChatterboxVoiceSwap._vc_model = None
+             MH_ChatterboxVoiceSwap._vc_device = None
              if torch.cuda.is_available():
                  torch.cuda.empty_cache() # Clear CUDA cache if possible
              if torch.backends.mps.is_available():
@@ -483,12 +483,12 @@ class FL_ChatterboxVCNode(AudioNodeBase):
 
 # Node mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
-    "FL_ChatterboxTTS": FL_ChatterboxTTSNode,
-    "FL_ChatterboxVC": FL_ChatterboxVCNode,
+    "MH_ChatterboxTTS": MH_ChatterboxTTS,
+    "MH_ChatterboxVoiceSwap": MH_ChatterboxVoiceSwap,
 }
 
 # Display names for the nodes
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "FL_ChatterboxTTS": "FL Chatterbox TTS",
-    "FL_ChatterboxVC": "FL Chatterbox VC",
+    "MH_ChatterboxTTS": "[MH] Chatterbox TTS",  
+    "MH_ChatterboxVoiceSwap": "[MH] Chatterbox Voice Conversion",
 }
