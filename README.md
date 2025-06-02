@@ -16,6 +16,10 @@ A custom node extension for ComfyUI that adds text-to-speech (TTS) and voice con
    ```bash
    pip install -r ComfyUI_Fill-ChatterBox/requirements.txt
    ```
+3. Install chatterbox
+   ```bash
+   pip install chatterbox-tts --no-deps
+   ```
 
 
 ## Usage
