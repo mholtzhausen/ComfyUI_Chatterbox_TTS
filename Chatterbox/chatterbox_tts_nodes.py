@@ -481,14 +481,83 @@ class MH_ChatterboxVoiceSwap(AudioNodeBase):
         
         return (audio_data, message)
 
+# Audiobook Processor Node
+class MH_AudiobookProcessor:
+    """
+    ComfyUI node for processing text files into sections for an audiobook.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "text_file_path": ("STRING", {
+                    "multiline": False,
+                    "default": "./audiobook_content.txt"
+                }),
+                "max_words_per_section": ("INT", {
+                    "default": 250,
+                    "min": 50,
+                    "max": 1000,
+                    "step": 10
+                }),
+            }
+        }
+
+    RETURN_TYPES = (["STRING"],) # ComfyUI expects a list of types, even for a single list output
+    RETURN_NAMES = ("text_sections",)
+    FUNCTION = "process_audiobook"
+    OUTPUT_NODE = False
+    CATEGORY = "MH/Chatterbox TTS"
+
+    def process_audiobook(self, text_file_path: str, max_words_per_section: int):
+        """
+        Processes a text file into sections for an audiobook.
+
+        Args:
+            text_file_path: Path to the text file.
+            max_words_per_section: Maximum number of words per section.
+
+        Returns:
+            A tuple containing a list of text sections.
+        """
+        sections = []
+        try:
+            with open(text_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            words = content.split()
+            current_section_words = []
+            for word in words:
+                current_section_words.append(word)
+                if len(current_section_words) >= max_words_per_section:
+                    sections.append(" ".join(current_section_words))
+                    current_section_words = []
+            
+            # Add any remaining words as the last section
+            if current_section_words:
+                sections.append(" ".join(current_section_words))
+
+        except FileNotFoundError:
+            print(f"Error: File not found at {text_file_path}")
+            # Return a tuple with an empty list, as per ComfyUI's expected output format
+            return ([],) 
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            return ([],)
+
+        # ComfyUI expects the output to be a tuple, even if it's a single list.
+        # The list itself should contain strings.
+        return (sections,)
 # Node mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
     "MH_ChatterboxTTS": MH_ChatterboxTTS,
     "MH_ChatterboxVoiceSwap": MH_ChatterboxVoiceSwap,
+    "MH_AudiobookProcessor": MH_AudiobookProcessor,
 }
 
 # Display names for the nodes
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MH_ChatterboxTTS": "[MH] Chatterbox TTS",  
+    "MH_ChatterboxTTS": "[MH] Chatterbox TTS",
     "MH_ChatterboxVoiceSwap": "[MH] Chatterbox Voice Conversion",
+    "MH_AudiobookProcessor": "MH Audiobook Processor",
 }
