@@ -3,13 +3,22 @@ import torch
 import torchaudio
 import numpy as np
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
+import re
 
 # Import directly from the chatterbox package
 from ..local_chatterbox.chatterbox.tts import ChatterboxTTS
 from ..local_chatterbox.chatterbox.vc import ChatterboxVC
 
 from comfy.utils import ProgressBar
+
+class AudiobookSection:
+    def __init__(self, text: str, narrator_details: Dict, characters_details: Dict, index: int, filename: str):
+        self.text: str = text
+        self.narrator: Dict = narrator_details
+        self.characters: Dict = characters_details
+        self.index: int = index
+        self.filename: str = filename
 
 # Monkey patch torch.load to use MPS or CPU if map_location is not specified
 original_torch_load = torch.load
@@ -487,12 +496,12 @@ class MH_AudiobookProcessor:
     ComfyUI node for processing text files into sections for an audiobook.
     """
     @classmethod
-    def INPUT_TYPES(cls):
+    def INPUT_TYPES(cls): # Use 'cls' as is conventional for classmethods
         return {
             "required": {
                 "text_file_path": ("STRING", {
                     "multiline": False,
-                    "default": "./audiobook_content.txt"
+                    "default": "./audiobook.txt" # Updated default
                 }),
                 "max_words_per_section": ("INT", {
                     "default": 250,
@@ -503,50 +512,215 @@ class MH_AudiobookProcessor:
             }
         }
 
-    RETURN_TYPES = (["STRING"],) # ComfyUI expects a list of types, even for a single list output
-    RETURN_NAMES = ("text_sections",)
+    RETURN_TYPES = ("AUDIOBOOK_SECTIONS",)
+    RETURN_NAMES = ("sections",)
     FUNCTION = "process_audiobook"
     OUTPUT_NODE = False
     CATEGORY = "MH/Chatterbox TTS"
 
-    def process_audiobook(self, text_file_path: str, max_words_per_section: int):
-        """
-        Processes a text file into sections for an audiobook.
+    def process_audiobook(self, text_file_path: str, max_words_per_section: int) -> tuple[List[AudiobookSection],]:
+        sections: List[AudiobookSection] = []
+        narrator_details: Dict = {}
+        character_settings: Dict = {}
+        current_section_index = 0
+        
+        attribute_parser_regex = re.compile(r"(\w+)=[\"']?([^\"']+)[\"']?")
 
-        Args:
-            text_file_path: Path to the text file.
-            max_words_per_section: Maximum number of words per section.
+        def parse_attrs(attr_string: str) -> Dict:
+            attrs = {}
+            if attr_string:
+                for match in attribute_parser_regex.finditer(attr_string):
+                    key, value = match.groups()
+                    if value.replace('.', '', 1).isdigit(): # Basic check for number
+                        if '.' in value: attrs[key] = float(value)
+                        else: attrs[key] = int(value)
+                    elif value.lower() == 'true': attrs[key] = True
+                    elif value.lower() == 'false': attrs[key] = False
+                    else: attrs[key] = value
+            return attrs
 
-        Returns:
-            A tuple containing a list of text sections.
-        """
-        sections = []
         try:
+            if not os.path.exists(text_file_path):
+                print(f"Error: File not found at {text_file_path}")
+                return ([],)
             with open(text_file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            
-            words = content.split()
-            current_section_words = []
-            for word in words:
-                current_section_words.append(word)
-                if len(current_section_words) >= max_words_per_section:
-                    sections.append(" ".join(current_section_words))
-                    current_section_words = []
-            
-            # Add any remaining words as the last section
-            if current_section_words:
-                sections.append(" ".join(current_section_words))
-
-        except FileNotFoundError:
-            print(f"Error: File not found at {text_file_path}")
-            # Return a tuple with an empty list, as per ComfyUI's expected output format
-            return ([],) 
-        except Exception as e:
-            print(f"An error occurred: {e}")
+        except Exception as e: # Catch other potential file errors
+            print(f"Error reading file {text_file_path}: {str(e)}")
             return ([],)
 
-        # ComfyUI expects the output to be a tuple, even if it's a single list.
-        # The list itself should contain strings.
+        # Store segments of text with their associated speaker type and parameters
+        # Each segment is {"speaker_type": "narrator" or "character", "name": "char_name" (if character), "params": dict_of_params, "text": "speakable_text"}
+        speakable_segments = []
+        
+        # Regex definitions
+        narrator_tag_regex = re.compile(r"<narrator\s+(.+?)\s*/>", re.IGNORECASE)
+        set_tag_regex = re.compile(r"<set\s+name=[\"']?(\w+)[\"']?\s*(.*?)\s*/>", re.IGNORECASE)
+        dialogue_tag_regex = re.compile(r"<(\w+)(?:\s+([^>]*?))?\s*>(.*?)</\1>", re.IGNORECASE | re.DOTALL)
+
+        # Initial position in the content string
+        current_pos = 0
+
+        # 1. Parse Narrator Tag (should be at the beginning)
+        narrator_match = narrator_tag_regex.match(content) # Use match for beginning
+        if narrator_match:
+            narrator_attrs_str = narrator_match.group(1)
+            narrator_details.update(parse_attrs(narrator_attrs_str))
+            current_pos = narrator_match.end()
+        else:
+            # Default narrator if not specified, or handle as an error if required
+            narrator_details = {"voice": "default_narrator_voice"}
+            print("Warning: Narrator tag not found or not at the beginning. Using default narrator settings.")
+
+        # 2. Find all other tags and interspersing text
+        # Create a list of all tag occurrences to process them in order
+        all_found_tags = []
+        for match in set_tag_regex.finditer(content, current_pos):
+            all_found_tags.append({'type': 'set', 'match': match, 'start': match.start(), 'end': match.end()})
+        for match in dialogue_tag_regex.finditer(content, current_pos):
+            all_found_tags.append({'type': 'dialogue', 'match': match, 'start': match.start(), 'end': match.end()})
+        
+        all_found_tags.sort(key=lambda x: x['start'])
+
+        # Process text and tags in order
+        for tag_info in all_found_tags:
+            match_obj = tag_info['match']
+            # Add narrated text before the current tag
+            if match_obj.start() > current_pos:
+                text_before_tag = content[current_pos:match_obj.start()].strip()
+                if text_before_tag:
+                    speakable_segments.append({
+                        "speaker_type": "narrator",
+                        "params": narrator_details.copy(), # Current global narrator settings
+                        "text": text_before_tag
+                    })
+            
+            # Process the tag itself
+            if tag_info['type'] == 'set':
+                char_name = match_obj.group(1)
+                attrs_str = match_obj.group(2)
+                char_attrs = parse_attrs(attrs_str)
+                if char_name not in character_settings:
+                    character_settings[char_name] = {}
+                character_settings[char_name].update(char_attrs) # Update global character settings
+            
+            elif tag_info['type'] == 'dialogue':
+                char_name = match_obj.group(1)
+                attrs_str = match_obj.group(2) # Attributes specific to this dialogue instance
+                dialogue_text = match_obj.group(3).strip().replace('"', '') # Clean quotes
+
+                # Combine base character settings with dialogue-specific overrides
+                effective_char_params = character_settings.get(char_name, {}).copy()
+                if attrs_str:
+                    dialogue_overrides = parse_attrs(attrs_str)
+                    effective_char_params.update(dialogue_overrides)
+                
+                if dialogue_text:
+                    speakable_segments.append({
+                        "speaker_type": "character",
+                        "name": char_name,
+                        "params": effective_char_params, # These are the settings for THIS segment of dialogue
+                        "text": dialogue_text
+                    })
+            current_pos = match_obj.end()
+
+        # Add any remaining narrated text after the last tag
+        if current_pos < len(content):
+            remaining_text = content[current_pos:].strip()
+            if remaining_text:
+                speakable_segments.append({
+                    "speaker_type": "narrator",
+                    "params": narrator_details.copy(),
+                    "text": remaining_text
+                })
+
+        # 3. Split speakable_segments into AudiobookSections
+        current_section_text_parts = []
+        current_word_count = 0
+        
+        # The narrator_details and character_settings for an AudiobookSection should be the
+        # *defaults* active at the beginning of that section.
+        # The actual text in AudiobookSection.text is clean.
+        # The challenge of passing per-segment voice parameters for dialogue within a section
+        # is deferred if AudiobookSection only holds defaults.
+        # For this implementation, we'll store clean text.
+
+        for segment in speakable_segments:
+            segment_text_clean = segment["text"] # Already clean
+            words_in_segment = len(segment_text_clean.split())
+
+            if not segment_text_clean:
+                continue
+
+            # If current section + new segment > max_words, finalize current section
+            if current_section_text_parts and (current_word_count + words_in_segment > max_words_per_section):
+                sections.append(AudiobookSection(
+                    text=" ".join(current_section_text_parts),
+                    narrator_details=narrator_details.copy(), # Global defaults at section creation
+                    characters_details={k: v.copy() for k, v in character_settings.items()}, # Global defaults
+                    index=current_section_index,
+                    filename=f"section_{current_section_index:03d}.wav"
+                ))
+                current_section_index += 1
+                current_section_text_parts = []
+                current_word_count = 0
+            
+            # If the segment itself is larger than max_words_per_section, split it
+            if words_in_segment > max_words_per_section:
+                words = segment_text_clean.split()
+                temp_buffer = []
+                for i, word in enumerate(words):
+                    temp_buffer.append(word)
+                    if len(temp_buffer) == max_words_per_section or i == len(words) - 1:
+                        # If there was pending text, flush it first. This shouldn't happen if logic above is correct.
+                        if current_section_text_parts: # Safeguard
+                             sections.append(AudiobookSection(
+                                text=" ".join(current_section_text_parts),
+                                narrator_details=narrator_details.copy(),
+                                characters_details={k: v.copy() for k, v in character_settings.items()},
+                                index=current_section_index,
+                                filename=f"section_{current_section_index:03d}.wav"))
+                             current_section_index += 1
+                             current_section_text_parts = []
+                             current_word_count = 0
+
+                        sections.append(AudiobookSection(
+                            text=" ".join(temp_buffer),
+                            narrator_details=narrator_details.copy(),
+                            characters_details={k: v.copy() for k, v in character_settings.items()},
+                            index=current_section_index,
+                            filename=f"section_{current_section_index:03d}.wav"
+                        ))
+                        current_section_index += 1
+                        temp_buffer = []
+                # After splitting a large segment, current_section_text_parts should be empty.
+            else: # Segment fits or can be added to current section
+                current_section_text_parts.append(segment_text_clean)
+                current_word_count += words_in_segment
+                # If adding this segment makes the current section full or over
+                if current_word_count >= max_words_per_section:
+                    sections.append(AudiobookSection(
+                        text=" ".join(current_section_text_parts),
+                        narrator_details=narrator_details.copy(),
+                        characters_details={k: v.copy() for k, v in character_settings.items()},
+                        index=current_section_index,
+                        filename=f"section_{current_section_index:03d}.wav"
+                    ))
+                    current_section_index += 1
+                    current_section_text_parts = []
+                    current_word_count = 0
+        
+        # Add any remaining text as the last section
+        if current_section_text_parts:
+            sections.append(AudiobookSection(
+                text=" ".join(current_section_text_parts),
+                narrator_details=narrator_details.copy(),
+                characters_details={k: v.copy() for k, v in character_settings.items()},
+                index=current_section_index,
+                filename=f"section_{current_section_index:03d}.wav"
+            ))
+            # current_section_index += 1 # Not needed for the very last section
+
         return (sections,)
 # Node mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
@@ -559,5 +733,5 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MH_ChatterboxTTS": "[MH] Chatterbox TTS",
     "MH_ChatterboxVoiceSwap": "[MH] Chatterbox Voice Conversion",
-    "MH_AudiobookProcessor": "MH Audiobook Processor",
+    "MH_AudiobookProcessor": "[MH] Audiobook Processor", # Updated display name
 }
