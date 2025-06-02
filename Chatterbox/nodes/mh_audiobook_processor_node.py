@@ -13,9 +13,24 @@ class MH_AudiobookProcessor:
     def INPUT_TYPES(cls): # Use 'cls' as is conventional for classmethods
         return {
             "required": {
-                "text_file_path": ("STRING", {
-                    "multiline": False,
-                    "default": "./audiobook.txt" # Updated default
+                "audio_book_text": ("STRING", {
+                    "multiline": True,
+                    "default": """<narrator voice="joe" cfg=0.4 exp=0.5 tmp=0.8 />
+<set name=sunny voice=sarah cfg=0.4 exp=0.7 tmp=0.8 />
+<set name="kobus" voice=chris cfg=0.6 exp=0.7 tmp=0.8 />
+<set name="janine" voice=ally cfg=0.3 exp=0.8 tmp=0.8 />
+
+The Fantastic Four and the Lost Puppy.
+
+The autumn leaves crunched beneath their feet as Sunny, Koo-bis, Janine, and Saa-rul walked home from school. The afternoon sun painted the sky in beautiful shades of orange and gold, and the four friends were chatting about their exciting day at school when suddenly, they heard a soft whimper coming from behind a large oak tree.
+
+<sunny cfg=0.4 exp=0.7 temp=0.8>"Did you hear that?"</sunny> Sunny asked, pushing her glasses up her nose.
+
+Koo-bis, who was carrying his favorite white guitar with its distinctive red border, stopped strumming mid-chord. <kobus exp=0.6>"It sounds like something's crying."</kobus>
+
+Carefully, they approached the tree, and there, curled up in a pile of golden leaves, was a small brown and white puppy. It was shivering and looked scared, with no collar or tag in sight.
+
+<janine cfg=0.3 exp=0.8>"Oh, the poor thing!"</janine> Janine exclaimed, kneeling down slowly. <janine cfg=0.3 exp=0.8>"It must be lost."</janine>"""
                 }),
                 "max_words_per_section": ("INT", {
                     "default": 250,
@@ -32,14 +47,19 @@ class MH_AudiobookProcessor:
     OUTPUT_NODE = False # This indicates it's not a final output node like an image saver
     CATEGORY = "MH/Chatterbox TTS"
 
-    def process_audiobook(self, text_file_path: str, max_words_per_section: int) -> tuple[List[AudiobookSection]]: # Corrected return type annotation
+    def process_audiobook(self, audio_book_text: str, max_words_per_section: int) -> tuple[List[AudiobookSection]]: # Corrected return type annotation
         sections: List[AudiobookSection] = []
         narrator_details: Dict = {}
         character_settings: Dict = {} # Stores default settings for characters
         current_section_index = 0
         
-        attribute_parser_regex = re.compile(r"(\w+)=[\"']?([^\"']+)[\"']?")
+        content = audio_book_text
+        if not isinstance(audio_book_text, str) or not audio_book_text.strip():
+            print(f"Warning: MH_AudiobookProcessor - audio_book_text is empty or invalid.")
+            return ([],) # Return empty sections tuple
 
+        attribute_parser_regex = re.compile(r"(\w+)=[\"']?([^\"']+)[\"']?")
+    
         def parse_attrs(attr_string: str) -> Dict:
             attrs = {}
             if attr_string:
@@ -55,19 +75,7 @@ class MH_AudiobookProcessor:
                         except ValueError: # If not a number, keep as string
                             attrs[key] = value
             return attrs
-
-        try:
-            if not os.path.exists(text_file_path):
-                # It's better to raise an error or return a message via node output
-                # For now, printing and returning empty.
-                print(f"Error: File not found at {text_file_path}")
-                return ([],) # ComfyUI expects a tuple of return values
-            with open(text_file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except Exception as e:
-            print(f"Error reading file {text_file_path}: {str(e)}")
-            return ([],)
-
+    
         speakable_segments = [] # Stores {"type": "narrator"/"character", "name": "char_name", "params": {}, "text": ""}
         
         # Regex for tags
