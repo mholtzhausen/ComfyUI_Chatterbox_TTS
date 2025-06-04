@@ -1,16 +1,34 @@
 import os
 import re
-from typing import List, Dict # Ensure Dict is imported
+from typing import List, Dict
 
 # Adjusted relative import for AudiobookSection
-from ..modules.audiobook_models import AudiobookSection
+from .modules.audiobook_models import AudiobookSection
 
 class MH_AudiobookProcessor:
     """
     ComfyUI node for processing text files into sections for an audiobook.
+
+    This class takes a text input with special tags for narrator and character settings,
+    parses the text to extract narrator details, character settings, and dialogue,
+    splits the text into sections based on a maximum word count per section,
+    and creates AudiobookSection objects for each section.
+
+    The text input format supports:
+    - Narrator settings at the beginning of the text
+    - Character settings using <set> tags
+    - Dialogue using character name tags
+    - Narrative text interspersed between tags
     """
+
     @classmethod
-    def INPUT_TYPES(cls): # Use 'cls' as is conventional for classmethods
+    def INPUT_TYPES(cls):
+        """
+        Define the input types for the ComfyUI node.
+
+        Returns:
+            dict: A dictionary defining the required inputs for the node.
+        """
         return {
             "required": {
                 "audio_book_text": ("STRING", {
@@ -41,47 +59,74 @@ Carefully, they approached the tree, and there, curled up in a pile of golden le
             }
         }
 
-    RETURN_TYPES = ("AUDIOBOOK_SECTIONS",) # This should be a custom type ComfyUI recognizes or a common type
+    RETURN_TYPES = ("AUDIOBOOK_SECTIONS",)
     RETURN_NAMES = ("sections",)
     FUNCTION = "process_audiobook"
-    OUTPUT_NODE = False # This indicates it's not a final output node like an image saver
+    OUTPUT_NODE = False
     CATEGORY = "MH/Chatterbox TTS"
 
-    def process_audiobook(self, audio_book_text: str, max_words_per_section: int) -> tuple[List[AudiobookSection]]: # Corrected return type annotation
+    def process_audiobook(self, audio_book_text: str, max_words_per_section: int) -> tuple[List[AudiobookSection]]:
+        """
+        Process the audiobook text into sections.
+
+        This method parses the input text to extract narrator details, character settings,
+        and dialogue, then splits the text into sections based on the maximum word count
+        per section, and creates AudiobookSection objects for each section.
+
+        Args:
+            audio_book_text (str): The input text containing narrator settings, character settings,
+                                   and dialogue with special tags.
+            max_words_per_section (int): The maximum number of words per section.
+
+        Returns:
+            tuple[List[AudiobookSection]]: A tuple containing a list of AudiobookSection objects.
+        """
         sections: List[AudiobookSection] = []
         narrator_details: Dict = {}
-        character_settings: Dict = {} # Stores default settings for characters
+        character_settings: Dict = {}
         current_section_index = 0
-        
+
         content = audio_book_text
         if not isinstance(audio_book_text, str) or not audio_book_text.strip():
             print(f"Warning: MH_AudiobookProcessor - audio_book_text is empty or invalid.")
-            return ([],) # Return empty sections tuple
+            return ([],)
 
         attribute_parser_regex = re.compile(r"(\w+)=[\"']?([^\"']+)[\"']?")
-    
+
         def parse_attrs(attr_string: str) -> Dict:
+            """
+            Parse attribute string into a dictionary.
+
+            Args:
+                attr_string (str): The attribute string to parse.
+
+            Returns:
+                Dict: A dictionary of parsed attributes.
+            """
             attrs = {}
             if attr_string:
                 for match in attribute_parser_regex.finditer(attr_string):
                     key, value = match.groups()
                     # Basic type conversion
-                    if value.lower() == 'true': attrs[key] = True
-                    elif value.lower() == 'false': attrs[key] = False
+                    if value.lower() == 'true':
+                        attrs[key] = True
+                    elif value.lower() == 'false':
+                        attrs[key] = False
                     else:
-                        try: # Attempt to convert to float or int
-                            if '.' in value: attrs[key] = float(value)
-                            else: attrs[key] = int(value)
-                        except ValueError: # If not a number, keep as string
+                        try:
+                            if '.' in value:
+                                attrs[key] = float(value)
+                            else:
+                                attrs[key] = int(value)
+                        except ValueError:
                             attrs[key] = value
             return attrs
-    
-        speakable_segments = [] # Stores {"type": "narrator"/"character", "name": "char_name", "params": {}, "text": ""}
-        
+
+        speakable_segments = []
+
         # Regex for tags
         narrator_tag_regex = re.compile(r"<narrator\s+(.+?)\s*/>", re.IGNORECASE)
         set_tag_regex = re.compile(r"<set\s+name=[\"']?(\w+)[\"']?\s*(.*?)\s*/>", re.IGNORECASE)
-        # Dialogue tag: <char_name optional_attrs>text</char_name>
         dialogue_tag_regex = re.compile(r"<(\w+)(?:\s+([^>]*?))?\s*>(.*?)</\1>", re.IGNORECASE | re.DOTALL)
 
         current_pos = 0
@@ -93,8 +138,8 @@ Carefully, they approached the tree, and there, curled up in a pile of golden le
             narrator_details.update(parse_attrs(narrator_attrs_str))
             current_pos = narrator_match.end()
         else:
-            # Default narrator if not specified. Consider if this should be an error.
-            narrator_details = {"voice_preset": "default_narrator"} # Example default
+            # Default narrator if not specified
+            narrator_details = {"voice_preset": "default_narrator"}
             print("Warning: Narrator tag not found or not at the beginning. Using default narrator settings.")
 
         # 2. Find all other tags and interspersing text
@@ -103,7 +148,7 @@ Carefully, they approached the tree, and there, curled up in a pile of golden le
             all_found_tags.append({'type': 'set', 'match': match, 'start': match.start()})
         for match in dialogue_tag_regex.finditer(content, current_pos):
             all_found_tags.append({'type': 'dialogue', 'match': match, 'start': match.start()})
-        
+
         all_found_tags.sort(key=lambda x: x['start'])
 
         last_processed_pos = current_pos
@@ -114,11 +159,11 @@ Carefully, they approached the tree, and there, curled up in a pile of golden le
                 text_before_tag = content[last_processed_pos:match_obj.start()].strip()
                 if text_before_tag:
                     speakable_segments.append({
-                        "type": "narrator", # "speaker_type" was used before, standardizing to "type"
+                        "type": "narrator",
                         "params": narrator_details.copy(),
                         "text": text_before_tag
                     })
-            
+
             if tag_info['type'] == 'set':
                 char_name = match_obj.group(1)
                 attrs_str = match_obj.group(2)
@@ -126,7 +171,7 @@ Carefully, they approached the tree, and there, curled up in a pile of golden le
                 if char_name not in character_settings:
                     character_settings[char_name] = {}
                 character_settings[char_name].update(char_attrs)
-            
+
             elif tag_info['type'] == 'dialogue':
                 char_name = match_obj.group(1)
                 attrs_str = match_obj.group(2)
@@ -136,7 +181,7 @@ Carefully, they approached the tree, and there, curled up in a pile of golden le
                 if attrs_str:
                     dialogue_overrides = parse_attrs(attrs_str)
                     effective_char_params.update(dialogue_overrides)
-                
+
                 if dialogue_text:
                     speakable_segments.append({
                         "type": "character",
@@ -157,17 +202,9 @@ Carefully, they approached the tree, and there, curled up in a pile of golden le
                 })
 
         # 3. Split speakable_segments into AudiobookSections
-        # This part needs careful review for how parameters are passed to AudiobookSection
-        # The current AudiobookSection takes narrator_details and characters_details (plural)
-        # which implies it might hold the *default* settings for that section.
-        # The speakable_segments, however, have per-segment parameters.
-        # For now, we'll pass the global defaults active at the time of section creation.
-        # A more advanced approach might involve passing a list of these speakable_segments
-        # directly, or enhancing AudiobookSection to handle them.
-
-        current_section_text_parts = [] # Stores text pieces for the current section
+        current_section_text_parts = []
         current_word_count = 0
-        
+
         for segment in speakable_segments:
             segment_text_clean = segment["text"]
             words_in_segment = len(segment_text_clean.split())
@@ -179,19 +216,19 @@ Carefully, they approached the tree, and there, curled up in a pile of golden le
             if current_section_text_parts and (current_word_count + words_in_segment > max_words_per_section):
                 sections.append(AudiobookSection(
                     text=" ".join(current_section_text_parts),
-                    narrator_details=narrator_details.copy(), # Global defaults
-                    characters_details={k: v.copy() for k, v in character_settings.items()}, # Global defaults
+                    narrator_details=narrator_details.copy(),
+                    characters_details={k: v.copy() for k, v in character_settings.items()},
                     index=current_section_index,
-                    filename=f"section_{current_section_index:03d}.wav" # Filename generation
+                    filename=f"section_{current_section_index:03d}.wav"
                 ))
                 current_section_index += 1
-                current_section_text_parts = [segment_text_clean] # Start new section with current segment
+                current_section_text_parts = [segment_text_clean]
                 current_word_count = words_in_segment
             else:
                 # Add segment to current section
                 current_section_text_parts.append(segment_text_clean)
                 current_word_count += words_in_segment
-        
+
         # Add any remaining text as the last section
         if current_section_text_parts:
             sections.append(AudiobookSection(
@@ -202,4 +239,4 @@ Carefully, they approached the tree, and there, curled up in a pile of golden le
                 filename=f"section_{current_section_index:03d}.wav"
             ))
 
-        return (sections,) # ComfyUI expects a tuple
+        return (sections,)

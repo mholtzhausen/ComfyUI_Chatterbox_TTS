@@ -4,9 +4,9 @@ import torchaudio
 import tempfile # Moved import to top level
 
 # Adjusted relative import for ChatterboxVC
-from ...local_chatterbox.chatterbox.vc import ChatterboxVC
+from .local_chatterbox.chatterbox.vc import ChatterboxVC
 # Adjusted relative import for AudioNodeBase
-from ..modules.audio_base import AudioNodeBase
+from .modules.audio_base import AudioNodeBase
 from comfy.utils import ProgressBar
 
 class MH_ChatterboxVoiceSwap(AudioNodeBase):
